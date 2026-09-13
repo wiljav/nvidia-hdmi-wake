@@ -1,8 +1,7 @@
 #!/bin/bash
 case "$1" in
   post)
-    # Find the user with an active graphical session on seat0.
-    SESSION=$(loginctl list-sessions --no-legend | awk '$3 == "seat0" && $4 == "user" {print $1; exit}')
+    SESSION=$(loginctl list-sessions --no-legend | awk '$4 == "seat0" && $6 == "user" {print $1; exit}')
     if [ -z "$SESSION" ]; then
         exit 0
     fi

@@ -1,35 +1,51 @@
-#!/usr/bin/bash
+#!/bin/bash
 # force-modeset.sh
 # Forces Mutter to re-apply display config, re-running HDMI link training.
-# Workaround for nouveau DPMS/resume link-training failure.
-#
-# Two paths:
-#   - Two logical monitors (lid open): disable HDMI, then restore both.
-#   - One logical monitor  (lid closed): swap HDMI to alternate mode, then back.
+# Workaround for nouveau HDMI wake failure after suspend/DPMS.
 
 set -euo pipefail
-
 WAIT="${1:-1}"
 
-HDMI_MAIN="3440x1440@59.973"
-HDMI_ALT="3440x1440@99.982"
+BUS="org.gnome.Mutter.DisplayConfig"
+OBJ="/org/gnome/Mutter/DisplayConfig"
+IFACE="org.gnome.Mutter.DisplayConfig"
+
+HDMI_MAIN_MODE="3440x1440@59.973"
+HDMI_ALT_MODE="1920x1080@60.000"
 EDP_MODE="1920x1080@60.164"
 
-COUNT=$(gdctl show 2>/dev/null | grep -c '^├──Logical monitor\|^└──Logical monitor')
+get_serial() {
+    gdbus call --session --dest "$BUS" --object-path "$OBJ" \
+        --method "$IFACE.GetCurrentState" \
+        | grep -oP '^\(uint32 \K[0-9]+'
+}
 
-if [ "$COUNT" -ge 2 ]; then
-    echo "Two monitors detected. Disable HDMI, then restore."
-    gdctl set --layout-mode logical \
-        --logical-monitor --monitor eDP-1 --mode "$EDP_MODE" --x 0 --y 0 --primary
-    sleep "$WAIT"
-    gdctl set --layout-mode logical \
-        --logical-monitor --monitor HDMI-1 --mode "$HDMI_MAIN" --x 0 --y 0 --primary \
-        --logical-monitor --monitor eDP-1 --mode "$EDP_MODE" --x 3440 --y 360
+has_edp_active() {
+    gdbus call --session --dest "$BUS" --object-path "$OBJ" \
+        --method "$IFACE.GetCurrentState" \
+        | grep -q '"eDP-1"'
+}
+
+apply() {
+    local cfg="$1"
+    local serial
+    serial=$(get_serial)
+    gdbus call --session --dest "$BUS" --object-path "$OBJ" \
+        --method "$IFACE.ApplyMonitorsConfig" \
+        "$serial" 1 "$cfg" "{}" >/dev/null
+}
+
+if has_edp_active; then
+    echo "Lid open: mirror then extend"
+    ALT="[(0, 0, 1.0, 0, true, [(\"HDMI-1\", \"$HDMI_ALT_MODE\", {}), (\"eDP-1\", \"$EDP_MODE\", {})])]"
+    MAIN="[(0, 0, 1.0, 0, true, [(\"HDMI-1\", \"$HDMI_MAIN_MODE\", {})]), (3440, 360, 1.0, 0, false, [(\"eDP-1\", \"$EDP_MODE\", {})])]"
 else
-    echo "Single monitor detected. Swap HDMI mode, then restore."
-    gdctl set --logical-monitor --monitor HDMI-1 --mode "$HDMI_ALT" --x 0 --y 0 --primary
-    sleep "$WAIT"
-    gdctl set --logical-monitor --monitor HDMI-1 --mode "$HDMI_MAIN" --x 0 --y 0 --primary
+    echo "Lid closed: HDMI resolution swap"
+    ALT="[(0, 0, 1.0, 0, true, [(\"HDMI-1\", \"$HDMI_ALT_MODE\", {})])]"
+    MAIN="[(0, 0, 1.0, 0, true, [(\"HDMI-1\", \"$HDMI_MAIN_MODE\", {})])]"
 fi
 
+apply "$ALT"
+sleep "$WAIT"
+apply "$MAIN"
 echo "Done."
