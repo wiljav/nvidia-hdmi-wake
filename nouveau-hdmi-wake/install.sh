@@ -23,12 +23,6 @@ sudo chmod +x /usr/lib/systemd/system-sleep/force-modeset-resume.sh
 
 echo "Installed /usr/lib/systemd/system-sleep/force-modeset-resume.sh"
 
-if [ -f "$SCRIPT_DIR/usb-wakeup.service" ]; then
-    sudo cp "$SCRIPT_DIR/usb-wakeup.service" /etc/systemd/system/usb-wakeup.service
-    sudo systemctl daemon-reload
-    sudo systemctl enable --now usb-wakeup.service
-    echo "Installed and enabled usb-wakeup.service"
-fi
 
 bash "$SCRIPT_DIR/configure-gsettings.sh"
 

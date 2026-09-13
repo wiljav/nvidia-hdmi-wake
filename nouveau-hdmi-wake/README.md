@@ -1,63 +1,46 @@
 # nouveau HDMI wake fix
 
 Workaround for external HDMI monitors that fail to wake after suspend
-or DPMS blanking on NVIDIA Turing GPUs using the nouveau driver.
+or hotplug on NVIDIA Turing GPUs using the nouveau driver.
 
 ## Problem
 
 On some laptops with an external HDMI monitor wired to a Turing NVIDIA
 GPU, the nouveau driver fails to re-run HDMI link training after a
-power state transition. The kernel reports the connector as connected,
-Mutter reports the output as active, but the physical HDMI link is dead
-and the monitor stays dark.
+power state transition or a hotplug event. The kernel reports the
+connector as connected, Mutter reports the output as active, but the
+physical HDMI link is dead and the monitor stays dark.
 
-Cold boot works. Suspend entry and exit complete cleanly. Only the
-HDMI link is not re-established.
+A full modeset restores the monitor. GNOME Settings achieves this by
+applying a mirror config and then reverting it. This repository
+reproduces those D-Bus calls directly.
 
-Confirmed on:
+Tested on:
 
 - Laptop: Lenovo IdeaPad Gaming 81Y4
 - GPU: NVIDIA TU117M (GeForce GTX 1650 Ti Mobile)
 - Monitor: AOC U34G2G1, 3440x1440 via HDMI
-- Kernel: 7.1.13-200.fc44.x86_64
-- Driver: nouveau (kernel built-in, GSP firmware)
+- Kernel: 7.2.4-200.fc44.x86_64 (also works on 7.1.13)
+- Driver: nouveau (kernel built-in)
 - Distro: Fedora 44
 - Desktop: GNOME 50 on Wayland
 
-## Symptoms
+## How it works
 
-- After suspend/resume, monitor stays dark
-- After DPMS blank, monitor stays dark
-- A full modeset (Super+P, or GNOME Settings display toggle) restores it
-- card*-HDMI-A-1/status reads connected
-- gdctl show lists the monitor
-- The monitor briefly detects a signal then goes back to sleep
+Two D-Bus calls to org.gnome.Mutter.DisplayConfig.ApplyMonitorsConfig.
 
-## What this fix does
+Lid open (two logical monitors):
+  1. Apply a mirror config with HDMI-1 at 1920x1080 and eDP-1 at 1920x1080
+  2. Wait 1 second
+  3. Apply an extend config with HDMI-1 at 3440x1440 and eDP-1 at 1920x1080
 
-A systemd sleep hook runs after resume from suspend, waits 4 seconds,
-and calls a user-level script that forces Mutter to reapply the display
-configuration. This triggers nouveau to re-run HDMI link training. The
-monitor comes back within ~8 seconds of wake.
+Lid closed (one logical monitor):
+  1. Apply HDMI-1 at 1920x1080
+  2. Wait 1 second
+  3. Apply HDMI-1 at 3440x1440
 
-The script is adaptive:
-
-- Lid open (two logical monitors): disables HDMI, then restores both
-- Lid closed (one logical monitor): swaps HDMI to an alternate refresh
-  rate, then swaps back
-
-The mode swap forces a modeset without requiring a second monitor.
-
-A separate systemd service enables USB root hub wake so an external
-keyboard can wake the system from suspend with the lid closed.
-
-## Requirements
-
-- Fedora 44 or a similar distro with GNOME 50 on Wayland and systemd 258+
-- nouveau driver (not the NVIDIA proprietary driver)
-- An HDMI monitor attached to the NVIDIA GPU
-- gdctl (part of gnome-control-center on Fedora 44)
-- A working external keyboard or other wake device
+The resolution change forces Mutter to reprogram the CRTC, which
+triggers nouveau to re-run HDMI link training. The monitor returns.
 
 ## Installation
 
@@ -66,47 +49,38 @@ keyboard can wake the system from suspend with the lid closed.
 
 Then reboot once.
 
-## Manual installation
-
-1. Copy force-modeset.sh to ~/.local/bin/ and mark executable
-2. Copy force-modeset-resume.sh to /usr/lib/systemd/system-sleep/
-   and mark executable.
-3. Copy usb-wakeup.service to /etc/systemd/system/ and enable it.
-   Edit the USB paths if your keyboard is not on usb1 / 1-3.
-4. Run configure-gsettings.sh
-5. Reboot
-
 ## Configuration
 
-The script assumes:
+Edit the top of force-modeset.sh if your monitor names, modes, or
+layout differ. Verify current values with:
 
-- HDMI connector: HDMI-1
-- Main mode: 3440x1440@59.973
-- Alternate mode (single-monitor case): 3440x1440@99.982
-- Internal panel: eDP-1, mode 1920x1080@60.164
-- Layout: HDMI at (0, 0), internal at (3440, 360)
+    gdctl show
 
-If your setup differs, edit the variables at the top of
-force-modeset.sh. Verify mode strings with gdctl show.
+## gsettings
+
+The script does not change gsettings. For the fix to be useful you
+should set:
+
+    gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-ac-type 'suspend'
+    gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-ac-timeout 1800
+    gsettings set org.gnome.desktop.session idle-delay 0
+
+- `sleep-inactive-ac-type 'suspend'`: auto-suspend after idle
+- `sleep-inactive-ac-timeout 1800`: after 30 minutes
+- `idle-delay 0`: disable DPMS blanking, which is unfixable at userspace level
 
 ## What this fix does NOT solve
 
-- DPMS wake is still broken in nouveau on this kernel.
-  idle-delay 0 disables DPMS blanking entirely. Auto-suspend replaces
-  it as the idle action.
-- Replugging a USB keyboard during suspend does not wake the system.
-  The keyboard must be plugged in before suspend.
-- Cold boot on kernel 7.2.4 fails with the same driver defect.
-  Kernel 7.1.13 is the tested baseline.
+- DPMS blanking. The monitor will not recover from a DPMS-off state
+  unless you run force-modeset.sh manually.
+- USB keyboard wake requires the keyboard to be plugged in before
+  suspend. Replugging during suspend does not wake the system.
 
-## Why not use the NVIDIA proprietary driver
+## Do not add
 
-- Proprietary 580: no HDMI wake issue, but cold boot requires an HDMI replug
-- Proprietary 610: kernel oops during suspend entry
-  (nvEvoDisableVblankSemControl), requires hard power-off
-
-Nouveau on kernel 7.1.13 has the fewest issues of the three, so this
-fix works around its remaining defect.
+- usb-wakeup.service: not needed, contains a toggle bug
+- login-fix.sh or GDM dconf overrides: never verified
+- Super+F12 keybinding for the script: does not work at the lock screen
 
 ## Uninstallation
 
