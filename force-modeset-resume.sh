@@ -13,7 +13,7 @@ case "$1" in
         exit 0
     fi
 
-    systemd-run --on-active=4 \
+    systemd-run --on-active=10 \
         --unit="force-modeset-resume-$(date +%s)" \
         --uid="$UID_NUM" \
         --gid="$UID_NUM" \

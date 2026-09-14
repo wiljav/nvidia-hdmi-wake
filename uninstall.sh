@@ -20,4 +20,3 @@ echo
 echo "Scripts removed. gsettings values are unchanged."
 echo "To restore default DPMS blanking:"
 echo "  gsettings set org.gnome.desktop.session idle-delay 300"
-echo "  gsettings set org.gnome.desktop.screensaver idle-activation-enabled true"
